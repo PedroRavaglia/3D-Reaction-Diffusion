@@ -372,6 +372,7 @@ app.createPrograms([updateVert, updateFrag], [pointsVertex, pointsFragment]).the
     .uniform("uMVP", rot);
 
 
+    let i = 0;
     function drawMain() {
         
         updateBlock();
@@ -394,8 +395,12 @@ app.createPrograms([updateVert, updateFrag], [pointsVertex, pointsFragment]).the
         .defaultViewport() // Set the viewport to the full canvas.;
         .enable(PicoGL.BLEND)
 
-        app.clear();
-        drawCall.draw();
+        if (i%2 == 0) {
+            app.clear();
+            drawCall.draw();
+        }
+
+        i++;
 
 
         // Key movements
