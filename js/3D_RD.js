@@ -11,10 +11,14 @@ canvas.width = window.innerWidth;
 canvas.height = window.innerHeight;
 
 var app = PicoGL.createApp(canvas)
-.clearColor(0.0, 0.0, 0.0, 1.0)
-.blendFunc(PicoGL.ONE, PicoGL.ONE_MINUS_SRC_ALPHA)
+.clearColor(0.0, 0., 0.15, 1.0)
+.enable(PicoGL.BLEND)
+.enable(PicoGL.DEPTH_TEST)
+.enable(PicoGL.CULL_FACE)
+.blendFunc(PicoGL.SRC_ALPHA, PicoGL.ONE_MINUS_SRC_ALPHA)
 .clear();
 
+gl.cullFace(PicoGL.FRONT)
 
 // Shaders that will update the frame of reaction diffusion
 const updateVert = `
@@ -32,111 +36,141 @@ const updateFrag = `
 precision lowp sampler3D;
 precision mediump float;
 
-uniform sampler3D currState;
-uniform float u_size;
-uniform float layer;
-
-layout(std140) uniform UpdateUniforms {
+uniform UpdateUniforms {
     float u_F;
     float u_K;
     float D_a;
     float D_b;
-    float L_1;
-    float L_2;
-    float L_3;
-    float L_4;
-    int run;
 };
 
-const float D_t = 1.0;
+uniform sampler3D currState;
+uniform float u_size;
+uniform float layer;
+
+float D_t = 2.;
+float L = 1./26.;
 
 out vec4 fragColor;
 void main() {
-    // vec3 position = vec3(gl_FragCoord.xy, layer);
-    vec3 position = vec3(gl_FragCoord.xy, u_size - layer);
-    // vec3 position = vec3(gl_FragCoord.xy, u_size/2.0);
+    vec3 position = vec3(gl_FragCoord.xy, layer);
 
+    vec2 laplacian;
+    
+    float coord[3] = float[3](-1.0, 0.0, 1.0);
+    for(int i=0; i<3; i++) {
+        for(int j=0; j<3; j++) {
+            for(int k=0; k<3; k++) {
+                if (vec3(i, j, k) == vec3(1.))
+                    laplacian -= texture(currState, (position + vec3(coord[i], coord[j], coord[k])) / u_size).xy;
+                else 
+                    laplacian += L * texture(currState, (position + vec3(coord[i], coord[j], coord[k])) / u_size).xy;
+            }
+        }
+    }
+
+    
     vec3 color = texture(currState, position / u_size).xyz;
-
-    vec2 laplacian = 
-        L_1  * color.xy
-
-        + L_2  * texture(currState, (position + vec3( 0.0,  1.0,  0.0)) / u_size).xy
-        + L_2  * texture(currState, (position + vec3( 0.0, -1.0,  0.0)) / u_size).xy
-        + L_3  * texture(currState, (position + vec3( 1.0,  0.0,  0.0)) / u_size).xy
-        + L_3  * texture(currState, (position + vec3(-1.0,  0.0,  0.0)) / u_size).xy
-        + L_4  * texture(currState, (position + vec3( 0.0,  0.0,  1.0)) / u_size).xy
-        + L_4  * texture(currState, (position + vec3( 0.0,  0.0, -1.0)) / u_size).xy
-        
-        + L_2  * texture(currState, (position + vec3( 1.0,  1.0,  1.0)) / u_size).xy
-        + L_2  * texture(currState, (position + vec3(-1.0,  1.0,  1.0)) / u_size).xy
-        + L_2  * texture(currState, (position + vec3(-1.0, -1.0,  1.0)) / u_size).xy
-        + L_2  * texture(currState, (position + vec3( 1.0, -1.0,  1.0)) / u_size).xy
-
-        + L_2  * texture(currState, (position + vec3( 1.0,  1.0, -1.0)) / u_size).xy
-        + L_2  * texture(currState, (position + vec3(-1.0,  1.0, -1.0)) / u_size).xy
-        + L_2  * texture(currState, (position + vec3(-1.0, -1.0, -1.0)) / u_size).xy
-        + L_2  * texture(currState, (position + vec3( 1.0, -1.0, -1.0)) / u_size).xy
-        ;
-
     float A = color.x + D_t * (D_a * laplacian.x - color.x * color.y * color.y + u_F * (1.0 - color.x));
     float B = color.y + D_t * (D_b * laplacian.y + color.x * color.y * color.y - (u_K + u_F) * color.y);
-
-    if (run == 1) {
-        fragColor = vec4(A, B, 0.0, 1.0);
-    } 
+    fragColor = vec4(A, B, 0.0, 1.0);
 }`
 
 
-// Shaders to render points
-const pointsVertex = `
+const RC_vertex = `
 #version 300 es
+precision mediump float;
+
+in vec3 pos;
+uniform mat4 proj_view;
+uniform float volume_scale;
+uniform vec3 eyePosition;
+
+out vec3 vray_dir;
+flat out vec3 transformed_eye;
+
+void main() {
+    vec3 volume_translation = vec3(0.5) - vec3(volume_scale) * 0.5;
+
+    gl_Position = proj_view * vec4(pos * vec3(volume_scale) + volume_translation, 1); 
+
+    transformed_eye = (eyePosition - volume_translation) / volume_scale;
+
+	vray_dir = pos - transformed_eye;
+}`
+
+const RC_fragment = `
+#version 300 es
+precision mediump float;
 precision lowp sampler3D;
 
-in vec4 position;
+uniform sampler3D volume;
+uniform vec3 volume_dims;
+uniform vec2 u_size;
 
-uniform mat4 uMVP;
-uniform sampler3D tex;
+in vec3 vray_dir;
+flat in vec3 transformed_eye;
 
-out vec3 vUV;
+vec2 intersect_box(vec3 orig, vec3 dir) {
+	const vec3 box_min = vec3(0.);
+	const vec3 box_max = vec3(1.);
+	vec3 inv_dir = 1.0 / dir;
+	vec3 tmin_tmp = (box_min - orig) * inv_dir;
+	vec3 tmax_tmp = (box_max - orig) * inv_dir;
+	vec3 tmin = min(tmin_tmp, tmax_tmp);
+	vec3 tmax = max(tmin_tmp, tmax_tmp);
+	float t0 = max(tmin.x, max(tmin.y, tmin.z));
+	float t1 = min(tmax.x, min(tmax.y, tmax.z));
+	return vec2(t0, t1);
+}
+
+float linear_to_srgb(float x) {
+	if (x <= 0.0031308f) {
+		return 12.92f * x;
+	}
+	return 1.055f * pow(x, 1.f / 2.4f) - 0.055f;
+}
+
+out vec4 color;
 void main() {
-    vUV = position.xyz + 0.5;
-    vec4 color = texture(tex, vUV);
 
-    if (color.x < 0.2) {
-        gl_Position = uMVP * position;
-        gl_PointSize = 5.8;
+    vec3 ray_dir = normalize(vray_dir);
+	vec2 t_hit = intersect_box(transformed_eye, ray_dir);
+	if (t_hit.x > t_hit.y) {
+		discard;
+	}
+
+    t_hit.x = max(t_hit.x, 0.0);
+
+    vec3 dt_vec = 1.0 / (vec3(volume_dims) * abs(ray_dir));
+	float dt = min(dt_vec.x, min(dt_vec.y, dt_vec.z));
+
+    vec3 p = transformed_eye + (t_hit.x + dt) * ray_dir;
+
+    float depth = 0.;
+    for (float t = t_hit.x; t < t_hit.y; t += dt) {
+        vec3 val = texture(volume, p).xyz;
+
+        if (val.y - val.x > 0.0) {
+            color.rgb += (1. - color.a) * val.y;
+            color.a += (1. - color.a) * val.y;
+        }
+        
+        color.w += val.y;
+
+        if (color.w >= 0.95) {
+            break;
+        }
+
+        p += ray_dir * dt;
     }
-    
-}`
-
-const pointsFragment = `
-#version 300 es
-precision highp float;
-precision lowp sampler3D;
-
-in vec3 vUV;
-
-uniform sampler3D tex;
-uniform float u_size;
-
-out vec4 fragColor;
-void main() {
-    vec4 color = texture(tex, vUV);
-
-    float A = color.x;
-    float B = color.y;
-
-    // fragColor = texture(tex, vUV);
-    // fragColor = vec4 (color.xyz, 1.0);
-    // fragColor = vec4 (color.x, color.x, color.x, 1.0);
-    // fragColor = vec4(A-B, A-B, A-B, 1.0);
-    fragColor = vec4(vUV.x, vUV.y, vUV.z, 1.0);
-    // fragColor = vec4(vUV.z, vUV.z, vUV.z, 1.0);
+    color.xyz *= p;
+    color.r = linear_to_srgb(color.r);
+    color.g = linear_to_srgb(color.g);
+    color.b = linear_to_srgb(color.b);
 }`
 
 
-
+// -----------------------------------------------------------------------------------------
 // Geometry data:
 //
 var quadPositions = app.createVertexBuffer(PicoGL.FLOAT, 2, new Float32Array([
@@ -147,25 +181,33 @@ var quadPositions = app.createVertexBuffer(PicoGL.FLOAT, 2, new Float32Array([
      1.0,  1.0, 
      1.0, -1.0
 ]));
-var texcoord = app.createVertexBuffer(PicoGL.FLOAT, 2, new Float32Array([
-    0.0,  0.0,
-    1.0,  0.0,
-    0.0,  1.0,
-    0.0,  1.0,
-    1.0,  0.0,
-    1.0,  1.0
-]));
-
 var vertexArray = app.createVertexArray();
 vertexArray.vertexAttributeBuffer(0, quadPositions);
-vertexArray.vertexAttributeBuffer(1, texcoord);
+
+var cubeStrip = app.createVertexBuffer(PicoGL.FLOAT, 3, new Float32Array([
+    1, 1, 0,
+	0, 1, 0,
+	1, 1, 1,
+	0, 1, 1,
+	0, 0, 1,
+	0, 1, 0,
+	0, 0, 0,
+	1, 1, 0,
+	1, 0, 0,
+	1, 1, 1,
+	1, 0, 1,
+	0, 0, 1,
+	1, 0, 0,
+	0, 0, 0
+]));
+var cubeArray = app.createVertexArray();
+cubeArray.vertexAttributeBuffer(0, cubeStrip);
 
 
-
-// -------------------------------------------------------
+// -----------------------------------------------------------------------------------------
 // 3D Textures:
 //
-const DIMENSIONS = 2**6;
+const DIMENSIONS = 2**7;
 
 const initialGridState_3d = new Uint8Array(DIMENSIONS * DIMENSIONS * DIMENSIONS * 2);
 
@@ -191,67 +233,33 @@ for (let i = 0; i < DIMENSIONS; ++i) {
     }
 }
 
-var currGridState_tex_3d = app.createTexture3D(initialGridState_3d, DIMENSIONS, DIMENSIONS, DIMENSIONS, { 
-    internalFormat: PicoGL.RG8,
-    maxAnisotropy: PicoGL.WEBGL_INFO.MAX_TEXTURE_ANISOTROPY 
-});
-var currGridState_3d = app.createFramebuffer();
-currGridState_3d.colorTarget(0, currGridState_tex_3d);
-
-var nextGridState_tex_3d = app.createTexture3D(initialGridState_3d, DIMENSIONS, DIMENSIONS, DIMENSIONS, { 
-    internalFormat: PicoGL.RG8,
-    maxAnisotropy: PicoGL.WEBGL_INFO.MAX_TEXTURE_ANISOTROPY 
-});
-var nextGridState_3d = app.createFramebuffer();
-nextGridState_3d.colorTarget(0, nextGridState_tex_3d);
-
-
-// ---------------------------------------
-// CREATE POINT CLOUD
-//
-const INCREMENT = 1 / DIMENSIONS;
-
-let positionData = new Float32Array(DIMENSIONS * DIMENSIONS * DIMENSIONS * 3);
-
-let positionIndex = 0;
-let x = -0.5;
-for (let i = 0; i < DIMENSIONS; ++i) {
-    let y = -0.5;
-    for (let j = 0; j < DIMENSIONS; ++j) {
-        let z = -0.5;
-        for (let k = 0; k < DIMENSIONS; ++k) {
-            positionData[positionIndex++] = x
-            positionData[positionIndex++] = y
-            positionData[positionIndex++] = z
-            z += INCREMENT;
-        }
-        y += INCREMENT;
-    }
-    x += INCREMENT;
+function createTex() {
+    var GridState_tex_3d  = app.createTexture3D(initialGridState_3d, DIMENSIONS, DIMENSIONS, DIMENSIONS, { 
+        internalFormat: PicoGL.RG8,
+        maxAnisotropy: PicoGL.WEBGL_INFO.MAX_TEXTURE_ANISOTROPY,
+        magFilter: PicoGL.LINEAR,
+        minFilter: PicoGL.LINEAR_MIPMAP_LINEAR 
+    });
+    var GridState_3d = app.createFramebuffer();
+    GridState_3d.colorTarget(0, GridState_tex_3d);
+    return [GridState_tex_3d, GridState_3d];
 }
 
-let pointPositions = app.createVertexBuffer(PicoGL.FLOAT, 3, positionData)
+var [currGridState_tex_3d, currGridState_3d] = createTex();
+var [nextGridState_tex_3d, nextGridState_3d] = createTex();
 
-let pointArray = app.createVertexArray()
-.vertexAttributeBuffer(0, pointPositions);
-
+// Freamebuffer to reload 3d texture to the inital state
+var reload = 0;
+var [reloadGrid_tex_3d, reloadGrid] = createTex();
 
 
 // UI
 //
-var FK = [[0.055, 0.062], [0.0367, 0.0649], [0.0545, 0.062]];
-var FK_options = ['Standart', 'Mitosis', 'Coral Growth'];
-
 let settings = {
-    feed: 0.008,
-    kill: 0.2,
-    D_a: 0.3,
-    D_b: 0.112,
-    L_1: -0.4703,
-    L_2: 0.06912,
-    L_3: 0.07556,
-    L_4: 0.0704,
-    FK_index: 0,
+    feed: 0.0233,
+    kill: 0.063,
+    D_a: 0.562,
+    D_b: 0.111
 }
 
 webglLessonsUI.setupUI(document.querySelector('#ui'), settings, [
@@ -259,10 +267,11 @@ webglLessonsUI.setupUI(document.querySelector('#ui'), settings, [
         settings.feed = ui.value;
         console.log(`feed: ${settings.feed}`);
     }},
-    {type: 'slider', key: 'kill', name: 'Kill', min: 0.0,    max: 0.3, step: 0.001, slide: (event, ui) => {
+    {type: 'slider', key: 'kill', name: 'Kill', min: 0.0,    max: 0.4, step: 0.001, slide: (event, ui) => {
         settings.kill = ui.value;
         console.log(`kill: ${settings.kill}`);
     }},
+
     {type: 'slider', key: 'D_a',  name: 'Diffusion Rate A',   min: 0.0,    max: 1.0, step: 0.001, slide: (event, ui) => {
         settings.D_a = ui.value;
         console.log(`D_a: ${settings.D_a}`);
@@ -270,93 +279,62 @@ webglLessonsUI.setupUI(document.querySelector('#ui'), settings, [
     {type: 'slider', key: 'D_b',  name: 'Diffusion Rate B',   min: 0.0,    max: 1.0, step: 0.01, slide: (event, ui) => {
         settings.D_b = ui.value;
         console.log(`D_b: ${settings.D_b}`);
-    }},
-    {type: 'slider', key: 'L_1',  name: 'Laplacian 1',        min: -1.0,   max: 1.0, step: 0.01, slide: (event, ui) => {
-        settings.L_1 = ui.value;
-        console.log(`L_1: ${settings.L_1}`);
-    }},
-    {type: 'slider', key: 'L_2',  name: 'Laplacian 2',        min: 0.0,    max: 0.1, step: 0.001, slide: (event, ui) => {
-        settings.L_2 = ui.value;
-        console.log(`L_2: ${settings.L_2}`);
-    }},
-    {type: 'slider', key: 'L_3',  name: 'Laplacian 3',        min: 0.0,    max: 0.1, step: 0.001, slide: (event, ui) => {
-        settings.L_3 = ui.value;
-        console.log(`L_3: ${settings.L_3}`);
-    }},
-    {type: 'slider', key: 'L_4',  name: 'Laplacian 4',        min: -0.1,    max: 0.1, step: 0.001, slide: (event, ui) => {
-        settings.L_4 = ui.value;
-        console.log(`L_4: ${settings.L_4}`);
-    }},
-    {type: 'option', key: 'FK_index', name: 'Patterns',   options: FK_options,    change: (event, ui) => {
-        settings.feed = FK[settings.FK_index][0];
-        settings.kill = FK[settings.FK_index][1];
     }}
 ]);
 
-
-var run = 1 ; 
-
-var updateUniforms = app.createUniformBuffer([
-    PicoGL.FLOAT,
-    PicoGL.FLOAT,
-    PicoGL.FLOAT,
-    PicoGL.FLOAT,
-    PicoGL.FLOAT,
-    PicoGL.FLOAT,
-    PicoGL.FLOAT,
-    PicoGL.FLOAT,
-    PicoGL.INT
-]);
+var updateUniforms = app.createUniformBuffer(new Array(5).fill(PicoGL.FLOAT));
 
 function updateBlock() {
     updateUniforms.set(0, settings.feed);
     updateUniforms.set(1, settings.kill);
     updateUniforms.set(2, settings.D_a);
     updateUniforms.set(3, settings.D_b);
-    updateUniforms.set(4, settings.L_1);
-    updateUniforms.set(5, settings.L_2);
-    updateUniforms.set(6, settings.L_3);
-    updateUniforms.set(7, settings.L_4);
-    updateUniforms.set(8, run);
+    updateUniforms.set(4, settings.L);
     updateUniforms.update();
 }
 updateBlock();
 
 
-
-// SET UP UNIFORM BUFFER
+// SET UP CAMERA MATRICES
 //
-let tex3DViewMatrix = mat4.create();
-let tex3DEyePosition = vec3.fromValues(0.5, 1.0, 2.0);
-mat4.lookAt(tex3DViewMatrix, tex3DEyePosition, vec3.fromValues(0, 0, 0), vec3.fromValues(0, 1, 0));
+let eyePosition = vec3.fromValues(0.5, 0.5, 1.5);
+let cam_center = vec3.fromValues(0.5, 0.5, 0.5);
 
 let viewMatrix = mat4.create();
-// let eyePosition = vec3.fromValues(1.3, 0.9, 1);
-let eyePosition = vec3.fromValues(1.3, 0.9, 0.0);
-mat4.lookAt(viewMatrix, eyePosition, vec3.fromValues(0, 0, 0), vec3.fromValues(0, 1, 0));
-
-let tex3DProjMatrix = mat4.create();
-mat4.perspective(tex3DProjMatrix, Math.PI / 2, 1, 0.1, 10.0);
+mat4.lookAt(viewMatrix, eyePosition, cam_center, vec3.fromValues(0, 1, 0));
 
 let projMatrix = mat4.create();
 mat4.perspective(projMatrix, Math.PI / 2, canvas.width / canvas.height, 0.1, 10.0);
 
-let tex3DViewProjMatrix = mat4.create();
-mat4.multiply(tex3DViewProjMatrix, tex3DProjMatrix, tex3DViewMatrix);
-
 let mvpMatrix = mat4.create();
 mat4.multiply(mvpMatrix, projMatrix, viewMatrix);
 
+//
+let mul_op = mat4.create();
+mat4.copy(mul_op, mvpMatrix);
 let rot = mat4.create();
-mat4.rotateX(rot, mvpMatrix, 0);
-// mat4.rotateX(rot, mvpMatrix, -Math.PI / 2);
 
+
+var lightPosition = vec3.fromValues(1.5, 1.5, 1.5);
+
+var sceneUniformBuffer = app.createUniformBuffer([
+    PicoGL.FLOAT_VEC4,
+    PicoGL.FLOAT_VEC4
+]);
+
+function updateBlock_scene() {
+    sceneUniformBuffer.set(0, eyePosition);
+    sceneUniformBuffer.set(1, lightPosition);
+    sceneUniformBuffer.update();
+}
+updateBlock_scene();
+
+var run = 1;
 let rot_cte = 100;
-
-
+let volume_scale = 1;
 
 // Creating program
-app.createPrograms([updateVert, updateFrag], [pointsVertex, pointsFragment]).then(([tex3DProgram, pointsProgram]) => {
+app.createPrograms([updateVert, updateFrag], [RC_vertex, RC_fragment]).then(([tex3DProgram, RC_program]) => {
 
     // Update draw call to reaction diffusion
     let drawCall_update = app.createDrawCall(tex3DProgram, vertexArray)
@@ -364,50 +342,64 @@ app.createPrograms([updateVert, updateFrag], [pointsVertex, pointsFragment]).the
     .uniform('u_size', DIMENSIONS)
     .uniformBlock("UpdateUniforms", updateUniforms);
 
-    // Draw call to the point cloud
-    let drawCall = app.createDrawCall(pointsProgram, pointArray)
-    .primitive(PicoGL.POINTS)
-    .texture("tex", nextGridState_3d.colorAttachments[0]) // 3D texture
-    .uniform('u_size', DIMENSIONS)
-    .uniform("uMVP", rot);
+    let RC_drawCall = app.createDrawCall(RC_program, cubeArray)
+    .primitive(PicoGL.TRIANGLE_STRIP)
+    .uniform("proj_view", mvpMatrix)
+    .uniform("volume_scale", volume_scale)
+    .texture("volume", nextGridState_3d.colorAttachments[0]) // 3D texture
+    .uniform('volume_dims', [parseFloat(DIMENSIONS), parseFloat(DIMENSIONS), parseFloat(DIMENSIONS)])
+    .uniform('eyePosition', eyePosition)
+    .uniform('u_size', [canvas.width, canvas.height])
 
-
-    let i = 0;
     function drawMain() {
-        
         updateBlock();
+        updateBlock_scene();
+        
+            if (run == 1) {
+                app.drawFramebuffer(nextGridState_3d)
+                .viewport(0, 0, DIMENSIONS, DIMENSIONS)
 
-        app.drawFramebuffer(nextGridState_3d)
-        .viewport(0, 0, DIMENSIONS, DIMENSIONS)
-        .enable(PicoGL.DEPTH_TEST);
+                for (let i = 0; i < DIMENSIONS; ++i) {
+                    let layer = (1 + 2*i)/2;
+                    nextGridState_3d.colorTarget(0, nextGridState_tex_3d, i);
+                    drawCall_update.uniform('layer', layer);
+                    drawCall_update.draw();
+                }
 
-        for (let i = 1; i < DIMENSIONS-1; ++i) {
-            nextGridState_3d.colorTarget(0, nextGridState_tex_3d, i);
-            drawCall_update.uniform('layer', i);
-            drawCall_update.draw();
-        }
-        app.readFramebuffer(nextGridState_3d)
-        .drawFramebuffer(currGridState_3d)
-        .blitFramebuffer(PicoGL.COLOR_BUFFER_BIT);
+                app.readFramebuffer(nextGridState_3d)
+                .drawFramebuffer(currGridState_3d)
+                .blitFramebuffer(PicoGL.COLOR_BUFFER_BIT);
+            }  
 
-        // Render point cloud on canvas
+        // Render on canvas
         app.defaultDrawFramebuffer()
         .defaultViewport() // Set the viewport to the full canvas.;
         .enable(PicoGL.BLEND)
+        .enable(PicoGL.DEPTH_TEST);
 
-        if (i%2 == 0) {
-            app.clear();
-            drawCall.draw();
+        if (reload == 1) {
+            app.readFramebuffer(reloadGrid)
+            .drawFramebuffer(currGridState_3d)
+            .blitFramebuffer(PicoGL.COLOR_BUFFER_BIT);
+            reload = 0;
         }
 
-        i++;
+        app.clear();
+        RC_drawCall.uniform("volume_scale", volume_scale)
+        RC_drawCall.draw();
 
-
-        // Key movements
-        if (left == 1) mat4.rotateY(rot, rot, -Math.PI / rot_cte);
-        if (right == 1) mat4.rotateY(rot, rot, Math.PI / rot_cte);
-        if (down == 1) mat4.rotateX(rot, rot, Math.PI / rot_cte);
-        if (up == 1) mat4.rotateX(rot, rot, -Math.PI / rot_cte);
+        if (left == 1) {
+            rotate_material(-Math.PI / rot_cte);
+        }
+        if (right == 1) {
+            rotate_material(Math.PI / rot_cte);
+        }
+        if (down == 1) {
+            rotate_material(-Math.PI / rot_cte, 'x');
+        }
+        if (up == 1) {
+            rotate_material(Math.PI / rot_cte, 'x');
+        }
 
         requestAnimationFrame(drawMain);
     }
@@ -416,55 +408,81 @@ app.createPrograms([updateVert, updateFrag], [pointsVertex, pointsFragment]).the
 });
 
 
-
-
-
 // -------------------------------------------------------------------------------------------------------------------------------------------------------------------
 //
 // CANVAS EVENTS:
 
-let cte_obj = 7;
+function rotate_material(rot_val=0, rot_type='y') {
+    if (rot_type == 'y') {
+        mat4.translate(rot, rot, vec3.fromValues(0.5, 0.0, 0.5))
+        mat4.rotateY(rot, rot, rot_val);
+        mat4.translate(rot, rot, vec3.fromValues(-0.5, 0.0, -0.5))
 
-let obj_Rot = {
-    x: 0,
-    y: 0,
-    z: 0
+        mat4.mul(mul_op, mul_op, rot);
+
+        vec3.rotateY(eyePosition, eyePosition, cam_center, rot_val);
+        mat4.lookAt(viewMatrix, eyePosition, cam_center, vec3.fromValues(0, 1, 0));
+        mat4.multiply(mvpMatrix, projMatrix, viewMatrix);
+        mat4.multiply(mul_op, mvpMatrix, rot);
+    }
+    else {
+        mat4.translate(rot, rot, vec3.fromValues(0.0, 0.5, 0.5))
+        mat4.rotateX(rot, rot, rot_val);
+        mat4.translate(rot, rot, vec3.fromValues(0.0, -0.5, -0.5))
+
+        mat4.mul(mul_op, mul_op, rot);
+
+        vec3.rotateX(eyePosition, eyePosition, cam_center, rot_val);
+        mat4.lookAt(viewMatrix, eyePosition, cam_center, vec3.fromValues(0, 1, 0));
+        mat4.multiply(mvpMatrix, projMatrix, viewMatrix);
+        mat4.multiply(mul_op, mvpMatrix, rot);
+    }
 }
+
+document.addEventListener('mousewheel', (event) => {
+    if (event.wheelDelta < 0) {
+        volume_scale -= 0.1;
+    }
+    else {
+        volume_scale += 0.1;
+    }
+})
+
 let left = 0;
 let right = 0;
 let up = 0;
 let down = 0;
-// let run = 0;
 
 document.addEventListener('keydown', (event) => {
     switch (event.code) {
         case 'ArrowUp':
         case 'KeyW':
             up = 1;
-            obj_Rot.x += cte_obj;
             break;
 
         case 'ArrowDown':
         case 'KeyS':
             down = 1;
-            obj_Rot.x -= cte_obj;
             break;
 
         case 'ArrowRight':
         case 'KeyD':
             right = 1;
-            obj_Rot.y -= cte_obj;
             break;
 
         case 'ArrowLeft':
         case 'KeyA':
             left = 1;
-            obj_Rot.y += cte_obj;
             break;
 
         case 'Space':
             if (run == 1) run = 0;
             else run = 1;
+            break;
+
+        case 'KeyR':
+            if (reload == 1) reload = 0;
+            else reload = 1;
             break;
     }
 })
@@ -484,13 +502,11 @@ document.addEventListener('keyup', (event) => {
         case 'ArrowUp':
         case 'KeyW':
             up = 0;
-            obj_Rot.x += cte_obj;
             break;
 
         case 'ArrowDown':
         case 'KeyS':
             down = 0;
-            obj_Rot.x -= cte_obj;
             break;
     }
 })
