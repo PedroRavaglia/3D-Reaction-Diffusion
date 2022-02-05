@@ -2,7 +2,7 @@
 
 3D reaction diffusion project using WebGL and ray casting to visualize the volume data.
 
-# Interactions
+#### Interactions
 
 * Rotate the camera using arrow keys or WASD
 * Pause animation with spacebar
