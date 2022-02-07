@@ -47,7 +47,7 @@ uniform sampler3D currState;
 uniform float u_size;
 uniform float layer;
 
-float D_t = 2.;
+float D_t = 1.;
 float L = 1./26.;
 
 out vec4 fragColor;
