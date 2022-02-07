@@ -9,3 +9,8 @@
 * Reload the scene with R key
 
 ### You can see the implementation [here](https://pedroravaglia.github.io/3D-Reaction-Diffusion/) (may not work properly on some GPUs)
+
+# Dependencies
+
+* [PicoGL](https://github.com/tsherif/picogl.js)
+* [glMatrix](https://github.com/toji/gl-matrix)
