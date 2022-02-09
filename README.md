@@ -4,7 +4,7 @@
 
 ## Interactions
 
-* Rotate the camera using arrow keys or WASD
+* Rotate the camera using the mouse
 * Pause animation with spacebar
 * Reload the scene with R key
 * Zoom in and out with the scroll wheel
