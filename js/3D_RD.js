@@ -327,7 +327,7 @@ let cam_up = vec3.fromValues(0.0, 1.0, 0.0);
 
 let camera = new ArcballCamera(eyePosition, cam_center, cam_up, 2, [canvas.width, canvas.height]);
 let camera_2 = new ArcballCamera(eyePosition_2, cam_center_2, cam_up, 2, [canvas.width, canvas.height], 1);
-camera.zoom(280);
+camera.zoom(285);
 
 let projView = mat4.create(); 
 let projView_2 = mat4.create(); 
