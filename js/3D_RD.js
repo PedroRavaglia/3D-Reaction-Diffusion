@@ -88,7 +88,7 @@ in vec3 pos;
 
 uniform float volume_scale;
 uniform mat4 projView;
-uniform vec3 eyePosition_2;
+uniform vec3 eyePosition;
 
 out vec3 vray_dir;
 flat out vec3 transformed_eye;
@@ -98,7 +98,7 @@ void main() {
 
     gl_Position = projView * vec4(pos * vec3(volume_scale) + volume_translation, 1);
 
-    transformed_eye = (eyePosition_2 - volume_translation) / volume_scale;
+    transformed_eye = (eyePosition - volume_translation) / volume_scale;
     vray_dir = pos - transformed_eye;
 }`
 
@@ -284,7 +284,7 @@ webglLessonsUI.setupUI(document.querySelector('#ui'), settings, [
         settings.feed = ui.value;
         console.log(`feed: ${settings.feed}`);
     }},
-    {type: 'slider', key: 'kill', name: 'Kill', min: 0.0,    max: 0.4, step: 0.001, slide: (event, ui) => {
+    {type: 'slider', key: 'kill', name: 'Kill', min: 0.0,    max: 0.1, step: 0.001, slide: (event, ui) => {
         settings.kill = ui.value;
         console.log(`kill: ${settings.kill}`);
     }},
@@ -293,7 +293,7 @@ webglLessonsUI.setupUI(document.querySelector('#ui'), settings, [
         settings.D_a = ui.value;
         console.log(`D_a: ${settings.D_a}`);
     }},
-    {type: 'slider', key: 'D_b',  name: 'Diffusion Rate B',   min: 0.0,    max: 1.0, step: 0.01, slide: (event, ui) => {
+    {type: 'slider', key: 'D_b',  name: 'Diffusion Rate B',   min: 0.0,    max: 0.4, step: 0.01, slide: (event, ui) => {
         settings.D_b = ui.value;
         console.log(`D_b: ${settings.D_b}`);
     }}
@@ -319,37 +319,23 @@ updateBlock();
 
 let eyePosition = vec3.fromValues(0.5, 0.5, 1.5);
 let cam_center = vec3.fromValues(0.5, 0.5, 0.5);
-
-let eyePosition_2 = vec3.fromValues(0., 0., 1.);
-let cam_center_2 = vec3.fromValues(0., 0., 0.);
-
 let cam_up = vec3.fromValues(0.0, 1.0, 0.0);
 
-let camera = new ArcballCamera(eyePosition, cam_center, cam_up, 2, [canvas.width, canvas.height]);
-let camera_2 = new ArcballCamera(eyePosition_2, cam_center_2, cam_up, 2, [canvas.width, canvas.height], 1);
-camera.zoom(285);
+let camera = new ArcballCamera(eyePosition, cam_center, cam_up, 0.5, [canvas.width, canvas.height]);
 
-let projView = mat4.create(); 
-let projView_2 = mat4.create(); 
-
-
-let viewMatrix = mat4.create();
-mat4.lookAt(viewMatrix, eyePosition, cam_center, cam_up);
+let projView = mat4.create();
 
 let projMatrix = mat4.create();
 mat4.perspective(projMatrix, Math.PI / 2, canvas.width / canvas.height, 0.1, 100.0);
-
-let mvpMatrix = mat4.create();
-mat4.multiply(mvpMatrix, projMatrix, viewMatrix);
-
-
-var run = 1;
-let volume_scale = 1;
 
 
 // ---------------------------------------------------------------------------------------------------------------------------
 // Creating program
 //
+
+var run = 1;
+let volume_scale = 1;
+
 app.createPrograms([updateVert, updateFrag], [RC_vertex, RC_fragment]).then(([tex3DProgram, RC_program]) => {
 
     // Update draw call to 3D reaction diffusion
@@ -362,7 +348,7 @@ app.createPrograms([updateVert, updateFrag], [RC_vertex, RC_fragment]).then(([te
     .primitive(PicoGL.TRIANGLE_STRIP)
     .uniform("volume_scale", volume_scale)
     .uniform('transform', camera.camera)
-    .uniform('eyePosition_2', [camera_2.invCamera[12], camera_2.invCamera[13], camera_2.invCamera[14]])
+    .uniform('eyePosition', [camera.invCamera[12], camera.invCamera[13], camera.invCamera[14]])
     .texture("volume", nextGridState_3d.colorAttachments[0]) // 3D texture
     .uniform('volume_dims', [parseFloat(DIMENSIONS), parseFloat(DIMENSIONS), parseFloat(DIMENSIONS)])
 
@@ -400,14 +386,12 @@ app.createPrograms([updateVert, updateFrag], [RC_vertex, RC_fragment]).then(([te
             reload = 0;
         }
 
-        
-        projView = mat4.mul(projView, mvpMatrix, camera.camera);
-        projView_2 = mat4.mul(projView_2, mvpMatrix, camera_2.camera);
+        projView = mat4.mul(projView, projMatrix, camera.camera);
 
         app.clear();
         RC_drawCall.uniform("volume_scale", volume_scale)
         RC_drawCall.uniform('projView', projView)
-        RC_drawCall.uniform('eyePosition_2', [camera_2.invCamera[12], camera_2.invCamera[13], camera_2.invCamera[14]])
+        RC_drawCall.uniform('eyePosition', [camera.invCamera[12], camera.invCamera[13], camera.invCamera[14]])
         RC_drawCall.draw();
 
         requestAnimationFrame(drawMain);
@@ -426,14 +410,11 @@ var controller = new Controller();
 controller.mousemove = function(prev, cur, evt) {
     if (evt.buttons == 1) {
         camera.rotate(prev, cur);
-        camera_2.rotate(prev, cur);
 
     } else if (evt.buttons == 2) {
         camera.pan([cur[0] - prev[0], prev[1] - cur[1]]);
-        camera_2.pan([cur[0] - prev[0], prev[1] - cur[1]]);
     }
 };
-
 controller.twoFingerDrag = function(drag) { camera.pan(drag); };
 
 controller.registerForCanvas(canvas);
