@@ -236,7 +236,7 @@ var getGLExtension = function(ext) {
  * so the mouse positions can be normalized into [-1, 1] from the pixel
  * coordinates.
  */
-var ArcballCamera = function(eye, center, up, zoomSpeed, screenDims, c=0) {
+var ArcballCamera = function(eye, center, up, zoomSpeed, screenDims) {
     var veye = vec3.set(vec3.create(), eye[0], eye[1], eye[2]);
     var vcenter = vec3.set(vec3.create(), center[0], center[1], center[2]);
     var vup = vec3.set(vec3.create(), up[0], up[1], up[2]);
@@ -252,34 +252,22 @@ var ArcballCamera = function(eye, center, up, zoomSpeed, screenDims, c=0) {
     var yAxis = vec3.cross(vec3.create(), xAxis, zAxis);
     vec3.normalize(yAxis, yAxis);
 
-    // vec3.cross(xAxis, zAxis, yAxis);
+    vec3.cross(xAxis, zAxis, yAxis);
     vec3.normalize(xAxis, xAxis);
 
     this.zoomSpeed = zoomSpeed;
     this.invScreen = [1.0 / screenDims[0], 1.0 / screenDims[1]];
 
-
-    this.c = c;
-    
-    if (c == 0) {
-        this.centerTranslation = mat4.fromTranslation(mat4.create(), center);
-        this.centerTranslation_2 = mat4.fromTranslation(mat4.create(), vec3.scale([], center, -1));
-        mat4.invert(this.centerTranslation, this.centerTranslation);
-        mat4.invert(this.centerTranslation_2, this.centerTranslation_2);
-    }
-    else {
-        this.centerTranslation = mat4.fromTranslation(mat4.create(), vec3.fromValues(0.5, 0.5, 0.5));
-        mat4.invert(this.centerTranslation, this.centerTranslation);
-    }
+    this.centerTranslation = mat4.fromTranslation(mat4.create(), center);
+    mat4.invert(this.centerTranslation, this.centerTranslation);
 
     var vt = vec3.set(vec3.create(), 0, 0, -1.0 * viewDist);
     this.translation = mat4.fromTranslation(mat4.create(), vt);
 
-    var rotMat = mat3.fromValues(
-         xAxis[0],  xAxis[1],  xAxis[2],
-         yAxis[0],  yAxis[1],  yAxis[2],
-        -zAxis[0], -zAxis[1], -zAxis[2]
-        );
+    var rotMat = mat3.fromValues(xAxis[0], xAxis[1], xAxis[2],
+        yAxis[0], yAxis[1], yAxis[2],
+        -zAxis[0], -zAxis[1], -zAxis[2]);
+    mat3.transpose(rotMat, rotMat);
     this.rotation = quat.fromMat3(quat.create(), rotMat);
     quat.normalize(this.rotation, this.rotation);
 
@@ -310,10 +298,9 @@ ArcballCamera.prototype.zoom = function(amount) {
     var vt = vec3.set(vec3.create(), 0.0, 0.0, amount * this.invScreen[1] * this.zoomSpeed);
     var t = mat4.fromTranslation(mat4.create(), vt);
     this.translation = mat4.mul(this.translation, t, this.translation);
-    // this.translation = mat4.mul(this.translation, this.translation, t);
-    // if (this.translation[14] >= -0.2) {
-    //     this.translation[14] = -0.2;
-    // }
+    if (this.translation[14] >= 0) {
+        this.translation[14] = 0;
+    }
     this.updateCameraMatrix();
 }
 
@@ -331,8 +318,6 @@ ArcballCamera.prototype.updateCameraMatrix = function() {
     var rotMat = mat4.fromQuat(mat4.create(), this.rotation);
     this.camera = mat4.mul(this.camera, rotMat, this.centerTranslation);
     this.camera = mat4.mul(this.camera, this.translation, this.camera);
-    if (this.c == 0)
-        this.camera = mat4.mul(this.camera, this.centerTranslation_2, this.camera);
     this.invCamera = mat4.invert(this.invCamera, this.camera);
 }
 
