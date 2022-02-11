@@ -1,6 +1,5 @@
-
-var canvas = document.getElementById("webgl-canvas");
-var gl = canvas.getContext("webgl2");
+const canvas = document.getElementById("webgl-canvas");
+const gl = canvas.getContext("webgl2");
 if (!gl) console.log("Not ennable to run WebGL2 with this browser");
 
 window.onresize = function() {
@@ -10,7 +9,7 @@ window.onresize = function() {
 canvas.width = window.innerWidth;
 canvas.height = window.innerHeight;
 
-var app = PicoGL.createApp(canvas)
+const app = PicoGL.createApp(canvas)
 .clearColor(0.0, 0., 0.15, 1.0)
 .enable(PicoGL.BLEND)
 .enable(PicoGL.DEPTH_TEST)
@@ -38,7 +37,7 @@ const updateFrag = `
 precision lowp sampler3D;
 precision mediump float;
 
-uniform UpdateUniforms {
+uniform settingsUniforms {
     float u_F;
     float u_K;
     float D_a;
@@ -46,7 +45,7 @@ uniform UpdateUniforms {
 };
 
 uniform sampler3D currState;
-uniform float u_size;
+uniform float dim;
 uniform float layer;
 
 float D_t = 1.;
@@ -63,14 +62,14 @@ void main() {
         for(int j=0; j<3; j++) {
             for(int k=0; k<3; k++) {
                 if (vec3(i, j, k) == vec3(1.))
-                    laplacian -= texture(currState, (position + vec3(coord[i], coord[j], coord[k])) / u_size).xy;
+                    laplacian -= texture(currState, (position + vec3(coord[i], coord[j], coord[k])) / dim).xy;
                 else 
-                    laplacian += L * texture(currState, (position + vec3(coord[i], coord[j], coord[k])) / u_size).xy;
+                    laplacian += L * texture(currState, (position + vec3(coord[i], coord[j], coord[k])) / dim).xy;
             }
         }
     }
 
-    vec3 color = texture(currState, position / u_size).xyz;
+    vec3 color = texture(currState, position / dim).xyz;
 
     float A = color.x + D_t * (D_a * laplacian.x - color.x * color.y * color.y + u_F * (1.0 - color.x));
     float B = color.y + D_t * (D_b * laplacian.y + color.x * color.y * color.y - (u_K + u_F) * color.y);
@@ -86,9 +85,12 @@ precision mediump float;
 
 in vec3 pos;
 
-uniform float volume_scale;
-uniform mat4 projView;
-uniform vec3 eyePosition;
+uniform transUniforms {
+    float volume_scale;
+    mat4 transform;
+    mat4 projMatrix;
+    vec3 eyePosition;
+};
 
 out vec3 vray_dir;
 flat out vec3 transformed_eye;
@@ -96,7 +98,7 @@ flat out vec3 transformed_eye;
 void main() {
     vec3 volume_translation = vec3(0.5) - vec3(volume_scale) * 0.5;
 
-    gl_Position = projView * vec4(pos * vec3(volume_scale) + volume_translation, 1);
+    gl_Position = projMatrix * transform * vec4(pos * vec3(volume_scale) + volume_translation, 1);
 
     transformed_eye = (eyePosition - volume_translation) / volume_scale;
     vray_dir = pos - transformed_eye;
@@ -168,10 +170,9 @@ void main() {
 
         if (val.y > 0.3) {
             color.rgb += (1. - color.x) * val.y;
-            color.a += (1. - color.y) * val.y;
         }
         
-        color.w += val.y;
+        color.a += val.y;
 
         if (color.w >= 0.95) {
             break;
@@ -189,7 +190,7 @@ void main() {
 // ---------------------------------------------------------------------------------------------------------------------------
 // Geometry data:
 //
-var quadPositions = app.createVertexBuffer(PicoGL.FLOAT, 2, new Float32Array([
+const quadPositions = app.createVertexBuffer(PicoGL.FLOAT, 2, new Float32Array([
     -1.0,  1.0, 
      1.0,  1.0, 
     -1.0, -1.0, 
@@ -197,10 +198,10 @@ var quadPositions = app.createVertexBuffer(PicoGL.FLOAT, 2, new Float32Array([
      1.0,  1.0, 
      1.0, -1.0
 ]));
-var vertexArray = app.createVertexArray();
+const vertexArray = app.createVertexArray();
 vertexArray.vertexAttributeBuffer(0, quadPositions);
 
-var cubeStrip = app.createVertexBuffer(PicoGL.FLOAT, 3, new Float32Array([
+const cubeStrip = app.createVertexBuffer(PicoGL.FLOAT, 3, new Float32Array([
     1, 1, 0,
 	0, 1, 0,
 	1, 1, 1,
@@ -216,7 +217,7 @@ var cubeStrip = app.createVertexBuffer(PicoGL.FLOAT, 3, new Float32Array([
 	1, 0, 0,
 	0, 0, 0
 ]));
-var cubeArray = app.createVertexArray();
+const cubeArray = app.createVertexArray();
 cubeArray.vertexAttributeBuffer(0, cubeStrip);
 
 
@@ -225,23 +226,23 @@ cubeArray.vertexAttributeBuffer(0, cubeStrip);
 //
 const DIMENSIONS = 2**6;
 
-const initialGridState_3d = new Uint8Array(DIMENSIONS * DIMENSIONS * DIMENSIONS * 2);
+let initialGridState_3d = new Uint8Array(DIMENSIONS * DIMENSIONS * DIMENSIONS * 2);
 
+// Sphere initially  centered on the grid
 const radius = 5;
 const radius_2 = radius**2;
-let center = [DIMENSIONS/2, DIMENSIONS/2, DIMENSIONS/2];
+const center = [DIMENSIONS/2, DIMENSIONS/2, DIMENSIONS/2];
 
 let textureIndex = 0;
 for (let i = 0; i < DIMENSIONS; ++i) {
     for (let j = 0; j < DIMENSIONS; ++j) {
         for (let k = 0; k < DIMENSIONS; ++k) {
-            let val = 255;
             if ((i-center[0])**2 + (j-center[1])**2 + (k-center[2])**2 <= radius_2) {
                 initialGridState_3d[textureIndex*2] = 0;
-                initialGridState_3d[textureIndex*2 + 1] = val;
+                initialGridState_3d[textureIndex*2 + 1] = 255;
             } 
             else {
-                initialGridState_3d[textureIndex*2] = val;
+                initialGridState_3d[textureIndex*2] = 255;
                 initialGridState_3d[textureIndex*2 + 1] = 0;
             }
             textureIndex++;
@@ -249,72 +250,30 @@ for (let i = 0; i < DIMENSIONS; ++i) {
     }
 }
 
+// Function that generates a 3D texture and the framebuffer that contains it using initialGridState_3d
 function createTex() {
-    var GridState_tex_3d  = app.createTexture3D(initialGridState_3d, DIMENSIONS, DIMENSIONS, DIMENSIONS, { 
+    let GridState_tex_3d  = app.createTexture3D(initialGridState_3d, DIMENSIONS, DIMENSIONS, DIMENSIONS, { 
         internalFormat: PicoGL.RG8,
         maxAnisotropy: PicoGL.WEBGL_INFO.MAX_TEXTURE_ANISOTROPY,
         magFilter: PicoGL.LINEAR,
-        minFilter: PicoGL.LINEAR_MIPMAP_LINEAR 
+        minFilter: PicoGL.LINEAR_MIPMAP_LINEAR
     });
-    var GridState_3d = app.createFramebuffer();
+    let GridState_3d = app.createFramebuffer();
     GridState_3d.colorTarget(0, GridState_tex_3d);
     return [GridState_tex_3d, GridState_3d];
 }
 
-var [currGridState_tex_3d, currGridState_3d] = createTex();
-var [nextGridState_tex_3d, nextGridState_3d] = createTex();
+// Framebuffers and textures that we will use to generate the 3D Reaction Diffusion process
+let [currGridState_tex_3d, currGridState_3d] = createTex();
+let [nextGridState_tex_3d, nextGridState_3d] = createTex();
 
-// Freamebuffer to reload 3d texture to the inital state
-var reload = 0;
-var [reloadGrid_tex_3d, reloadGrid] = createTex();
-
-
-// ---------------------------------------------------------------------------------------------------------------------------
-// UI
-//
-let settings = {
-    feed: 0.0233,
-    kill: 0.07,
-    D_a: 0.562,
-    D_b: 0.111
-}
-
-webglLessonsUI.setupUI(document.querySelector('#ui'), settings, [
-    {type: 'slider', key: 'feed', name: 'Feed', min: 0.0,    max: 0.1, step: 0.001, slide: (event, ui) => {
-        settings.feed = ui.value;
-        console.log(`feed: ${settings.feed}`);
-    }},
-    {type: 'slider', key: 'kill', name: 'Kill', min: 0.0,    max: 0.1, step: 0.001, slide: (event, ui) => {
-        settings.kill = ui.value;
-        console.log(`kill: ${settings.kill}`);
-    }},
-
-    {type: 'slider', key: 'D_a',  name: 'Diffusion Rate A',   min: 0.0,    max: 1.0, step: 0.001, slide: (event, ui) => {
-        settings.D_a = ui.value;
-        console.log(`D_a: ${settings.D_a}`);
-    }},
-    {type: 'slider', key: 'D_b',  name: 'Diffusion Rate B',   min: 0.0,    max: 0.4, step: 0.01, slide: (event, ui) => {
-        settings.D_b = ui.value;
-        console.log(`D_b: ${settings.D_b}`);
-    }}
-]);
-
-// Passing all variables of the UI to an uniform block
-var updateUniforms = app.createUniformBuffer(new Array(5).fill(PicoGL.FLOAT));
-
-function updateBlock() {
-    updateUniforms.set(0, settings.feed);
-    updateUniforms.set(1, settings.kill);
-    updateUniforms.set(2, settings.D_a);
-    updateUniforms.set(3, settings.D_b);
-    updateUniforms.set(4, settings.L);
-    updateUniforms.update();
-}
-updateBlock();
+// Freamebuffer to reload 3D textures to the inital state
+let reload = 0;
+let [reloadGrid_tex_3d, reloadGrid] = createTex();
 
 
 // ---------------------------------------------------------------------------------------------------------------------------
-// SET UP CAMERA MATRICES
+// Setting up camera matrices:
 //
 
 let eyePosition = vec3.fromValues(0.5, 0.5, 1.5);
@@ -323,39 +282,71 @@ let cam_up = vec3.fromValues(0.0, 1.0, 0.0);
 
 let camera = new ArcballCamera(eyePosition, cam_center, cam_up, 0.5, [canvas.width, canvas.height]);
 
-let projView = mat4.create();
-
 let projMatrix = mat4.create();
 mat4.perspective(projMatrix, Math.PI / 2, canvas.width / canvas.height, 0.1, 100.0);
 
 
 // ---------------------------------------------------------------------------------------------------------------------------
-// Creating program
+// Setting up uniform blocks:
 //
 
-var run = 1;
-let volume_scale = 1;
+// Passing all variables of the UI to a uniform block
+let settingsUniforms = app.createUniformBuffer(new Array(5).fill(PicoGL.FLOAT));
+function updateSettings() {
+    settingsUniforms.set(0, settings.feed);
+    settingsUniforms.set(1, settings.kill);
+    settingsUniforms.set(2, settings.D_a);
+    settingsUniforms.set(3, settings.D_b);
+    settingsUniforms.set(4, settings.L);
+    settingsUniforms.update();
+}
+updateSettings();
+
+
+let volume_scale = 1; // Variable to zoom in and out
+// Uniform block of all transformations and variables involved in rendering the environment
+let transUniforms = app.createUniformBuffer([
+    PicoGL.FLOAT,
+    PicoGL.FLOAT_MAT4,
+    PicoGL.FLOAT_MAT4,
+    PicoGL.FLOAT_VEC3
+]);
+function updateTrans() {
+    transUniforms.set(0, volume_scale);
+    transUniforms.set(1, camera.camera);
+    transUniforms.set(2, projMatrix);
+    transUniforms.set(3, [camera.invCamera[12], camera.invCamera[13], camera.invCamera[14]]);
+    transUniforms.update();
+}
+updateTrans();
+
+
+// ---------------------------------------------------------------------------------------------------------------------------
+// Creating program:
+//
+
+let run = 1; // Variable to pause animation
 
 app.createPrograms([updateVert, updateFrag], [RC_vertex, RC_fragment]).then(([tex3DProgram, RC_program]) => {
-
+    
     // Update draw call to 3D reaction diffusion
     let drawCall_update = app.createDrawCall(tex3DProgram, vertexArray)
     .texture("currState", currGridState_3d.colorAttachments[0]) // 3D texture
-    .uniform('u_size', DIMENSIONS)
-    .uniformBlock("UpdateUniforms", updateUniforms);
+    .uniformBlock("settingsUniforms", settingsUniforms)
+    .uniform('dim', DIMENSIONS)
 
     let RC_drawCall = app.createDrawCall(RC_program, cubeArray)
     .primitive(PicoGL.TRIANGLE_STRIP)
-    .uniform("volume_scale", volume_scale)
-    .uniform('transform', camera.camera)
-    .uniform('eyePosition', [camera.invCamera[12], camera.invCamera[13], camera.invCamera[14]])
+    .uniformBlock("transUniforms", transUniforms)
     .texture("volume", nextGridState_3d.colorAttachments[0]) // 3D texture
     .uniform('volume_dims', [parseFloat(DIMENSIONS), parseFloat(DIMENSIONS), parseFloat(DIMENSIONS)])
 
     function drawMain() {
-        updateBlock();
+        updateSettings();
+        updateTrans();
         
         if (run == 1) {
+            // Setting viewport to render on the texture
             app.drawFramebuffer(nextGridState_3d)
             .viewport(0, 0, DIMENSIONS, DIMENSIONS)
 
@@ -367,7 +358,7 @@ app.createPrograms([updateVert, updateFrag], [RC_vertex, RC_fragment]).then(([te
                 drawCall_update.draw();
             }
 
-            // Changing data from each framebuffer
+            // Exchanging data between framebuffers
             app.readFramebuffer(nextGridState_3d)
             .drawFramebuffer(currGridState_3d)
             .blitFramebuffer(PicoGL.COLOR_BUFFER_BIT);
@@ -386,12 +377,7 @@ app.createPrograms([updateVert, updateFrag], [RC_vertex, RC_fragment]).then(([te
             reload = 0;
         }
 
-        projView = mat4.mul(projView, projMatrix, camera.camera);
-
         app.clear();
-        RC_drawCall.uniform("volume_scale", volume_scale)
-        RC_drawCall.uniform('projView', projView)
-        RC_drawCall.uniform('eyePosition', [camera.invCamera[12], camera.invCamera[13], camera.invCamera[14]])
         RC_drawCall.draw();
 
         requestAnimationFrame(drawMain);
@@ -405,8 +391,8 @@ app.createPrograms([updateVert, updateFrag], [RC_vertex, RC_fragment]).then(([te
 //
 // CANVAS EVENTS:
 
-// Register mouse and touch listeners
-var controller = new Controller();
+// Register mouse
+const controller = new Controller();
 controller.mousemove = function(prev, cur, evt) {
     if (evt.buttons == 1) {
         camera.rotate(prev, cur);
@@ -415,8 +401,6 @@ controller.mousemove = function(prev, cur, evt) {
         camera.pan([cur[0] - prev[0], prev[1] - cur[1]]);
     }
 };
-controller.twoFingerDrag = function(drag) { camera.pan(drag); };
-
 controller.registerForCanvas(canvas);
 
 // Zoom event
