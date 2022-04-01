@@ -1,6 +1,6 @@
 # 3D-Reaction-Diffusion
 
-3D reaction diffusion project using WebGL 2.0 and ray casting to visualize the volume data.
+3D reaction diffusion project using WebGL 2.0 and ray casting to visualize volume data.
 
 ## Interactions
 
