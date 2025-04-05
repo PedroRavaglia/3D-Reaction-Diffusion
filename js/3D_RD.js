@@ -26,7 +26,7 @@ const updateVert = `
 #version 300 es
 precision mediump float;
 
-in vec2 position;
+layout(location = 0) in vec2 position;
 
 void main() {
     gl_Position = vec4(position, 0, 1);
@@ -55,18 +55,22 @@ out vec4 fragColor;
 void main() {
     vec3 position = vec3(gl_FragCoord.xy, layer);
 
-    vec2 laplacian;
+    vec2 laplacian = vec2(0.0);
     
     float coord[3] = float[3](-1.0, 0.0, 1.0);
-    for(int i=0; i<3; i++) {
-        for(int j=0; j<3; j++) {
-            for(int k=0; k<3; k++) {
-                if (vec3(i, j, k) == vec3(1.))
-                    laplacian -= texture(currState, (position + vec3(coord[i], coord[j], coord[k])) / dim).xy;
-                else 
-                    laplacian += L * texture(currState, (position + vec3(coord[i], coord[j], coord[k])) / dim).xy;
-            }
+    for (int i = 0; i < 3; ++i) {
+      for (int j = 0; j < 3; ++j) {
+        for (int k = 0; k < 3; ++k) {
+          // build the offset
+          vec3 offset = vec3(coord[i], coord[j], coord[k]);
+          // only the center sample subtracts; all others add
+          if (i == 1 && j == 1 && k == 1) {
+            laplacian -= texture(currState, (position + offset) / dim).xy;
+          } else {
+            laplacian += L * texture(currState, (position + offset) / dim).xy;
+          }
         }
+      }
     }
 
     vec3 color = texture(currState, position / dim).xyz;
@@ -83,7 +87,7 @@ const RC_vertex = `
 #version 300 es
 precision mediump float;
 
-in vec3 pos;
+layout(location = 0) in vec3 pos;
 
 uniform transUniforms {
     float volume_scale;
@@ -252,11 +256,12 @@ for (let i = 0; i < DIMENSIONS; ++i) {
 
 // Function that generates a 3D texture and the framebuffer that contains it using initialGridState_3d
 function createTex() {
-    let GridState_tex_3d  = app.createTexture3D(initialGridState_3d, DIMENSIONS, DIMENSIONS, DIMENSIONS, { 
+    let GridState_tex_3d  = app.createTexture3D(initialGridState_3d,
+        DIMENSIONS, DIMENSIONS, DIMENSIONS, { 
         internalFormat: PicoGL.RG8,
         maxAnisotropy: PicoGL.WEBGL_INFO.MAX_TEXTURE_ANISOTROPY,
         magFilter: PicoGL.LINEAR,
-        minFilter: PicoGL.LINEAR_MIPMAP_LINEAR
+        minFilter: PicoGL.LINEAR             // ← non‑mipmap filter
     });
     let GridState_3d = app.createFramebuffer();
     GridState_3d.colorTarget(0, GridState_tex_3d);
@@ -291,13 +296,13 @@ mat4.perspective(projMatrix, Math.PI / 2, canvas.width / canvas.height, 0.1, 100
 //
 
 // Passing all variables of the UI to a uniform block
-let settingsUniforms = app.createUniformBuffer(new Array(5).fill(PicoGL.FLOAT));
+let settingsUniforms = app.createUniformBuffer(new Array(4).fill(PicoGL.FLOAT));
 function updateSettings() {
     settingsUniforms.set(0, settings.feed);
     settingsUniforms.set(1, settings.kill);
     settingsUniforms.set(2, settings.D_a);
     settingsUniforms.set(3, settings.D_b);
-    settingsUniforms.set(4, settings.L);
+    // settingsUniforms.set(4, settings.L);
     settingsUniforms.update();
 }
 updateSettings();
@@ -358,10 +363,13 @@ app.createPrograms([updateVert, updateFrag], [RC_vertex, RC_fragment]).then(([te
                 drawCall_update.draw();
             }
 
-            // Exchanging data between framebuffers
-            app.readFramebuffer(nextGridState_3d)
-            .drawFramebuffer(currGridState_3d)
-            .blitFramebuffer(PicoGL.COLOR_BUFFER_BIT);
+            // Ping‑pong swap the textures & framebuffers
+            [currGridState_tex_3d, nextGridState_tex_3d] = [nextGridState_tex_3d, currGridState_tex_3d];
+            [currGridState_3d,     nextGridState_3d]     = [nextGridState_3d,     currGridState_3d];
+
+            // Rebind our draw‑calls to use the new “current” state
+            drawCall_update.texture("currState", currGridState_tex_3d);
+            RC_drawCall.texture(       "volume",      currGridState_tex_3d);
         }
 
         // Rendering on canvas
