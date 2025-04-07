@@ -379,9 +379,14 @@ app.createPrograms([updateVert, updateFrag], [RC_vertex, RC_fragment]).then(([te
         .enable(PicoGL.DEPTH_TEST);
 
         if (reload == 1) {
-            app.readFramebuffer(reloadGrid)
-            .drawFramebuffer(currGridState_3d)
-            .blitFramebuffer(PicoGL.COLOR_BUFFER_BIT);
+            for (let i = 0; i < DIMENSIONS; ++i) {
+                reloadGrid.colorTarget(0, reloadGrid_tex_3d, i);
+                currGridState_3d.colorTarget(0, currGridState_tex_3d, i);
+            
+                app.readFramebuffer(reloadGrid)
+                   .drawFramebuffer(currGridState_3d)
+                   .blitFramebuffer(PicoGL.COLOR_BUFFER_BIT);
+            }
             reload = 0;
         }
 
